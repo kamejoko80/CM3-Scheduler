@@ -17,6 +17,7 @@ Main file for SLIP D embedded software
 #include <stdlib.h>
 
 #include "led.h"
+#include "trace.h"
 
 /* variables */
 #define MAX_TASKS 32
@@ -25,7 +26,7 @@ typedef struct
 	void *sp;
 	int flags;
 } task_table_t;
-int current_task;
+int current_task = 0;
 task_table_t task_table[MAX_TASKS];
 
 #define MAIN_RETURN 0xFFFFFFF9  //Tells the handler to return using the MSP
@@ -85,18 +86,18 @@ static inline void * rd_stack_ptr(void){
  
 //This saves the context on the PSP, the Cortex-M3 pushes the other registers using hardware
 static inline void save_context(void){
-  volatile uint32_t scratch;
-  __asm volatile ("MRS %0, psp\n\t"
-      "STMDB %0!, {r4-r11}\n\t"
-      "MSR psp, %0\n\t"  : "=r" (scratch) );
+  __asm volatile (
+			"MRS r0, psp\n\t"
+      "STMDB r0!, {r4-r11}\n\t"
+      "MSR psp, r0\n\t"
+      );
 }
  
 //This loads the context from the PSP, the Cortex-M3 loads the other registers using hardware
 static inline void load_context(void){
-  volatile uint32_t scratch;
-  __asm volatile ("MRS %0, psp\n\t"
-      "LDMFD %0!, {r4-r11}\n\t"
-      "MSR psp, %0\n\t"  : "=r" (scratch) );
+  __asm volatile ("MRS r0, psp\n\t"
+      "LDMFD r0!, {r4-r11}\n\t"
+      "MSR psp, r0\n\t");
 }
  
 //This reads the PSP so that it can be stored in the task table
@@ -114,17 +115,28 @@ static inline void wr_thread_stack_ptr(void * ptr){
 //This is the context switcher
 void context_switcher(void){
     task_table[current_task].sp = rd_thread_stack_ptr(); //Save the current task's stack pointer
-    do {
-        current_task++;
-        if ( current_task == MAX_TASKS ){
-            current_task = 0;
-            *((uint32_t*)stack) = MAIN_RETURN; //Return to main process using main stack
-            break;
-  } else if ( task_table[current_task].flags & EXEC_FLAG ){ //Check to see if this task should be skipped
-            //change to unprivileged mode
-            *((uint32_t*)stack) = THREAD_RETURN; //Use the thread stack upon handler return
-            break;
-  }
+    do 
+    {
+			current_task++;
+			if ( current_task == MAX_TASKS ){
+				current_task = 0;
+				*((uint32_t*)stack) = MAIN_RETURN; //Return to main process using main stack
+				
+				char tmsg[255];
+				sprintf(tmsg, "MAIN: %i\n", current_task);
+				TRACE(tmsg);
+				
+				break;
+			} else if ( task_table[current_task].flags & EXEC_FLAG ){ //Check to see if this task should be skipped
+				//change to unprivileged mode
+				*((uint32_t*)stack) = THREAD_RETURN; //Use the thread stack upon handler return
+				
+				char tmsg[255];
+				sprintf(tmsg, "THREAD: %i\n", current_task);
+				TRACE(tmsg);
+				
+				break;
+			}
     } while(1);
     wr_thread_stack_ptr( task_table[current_task].sp ); //write the value of the PSP to the new task
 }
@@ -139,22 +151,22 @@ void del_process(void){
 //The SysTick interrupt handler -- this grabs the main stack value then calls the context switcher
 void SysTick_Handler()
 {
-	if (!running) return;
     save_context();  //The context is immediately saved
     stack = (uint32_t *)rd_stack_ptr();
-    if ( SysTick->CTRL & (1<16) ){ //Indicates timer counted to zero
-        context_switcher();
+    if ( SysTick->CTRL & (1 << 16) ){ //Indicates timer counted to zero
+			TRACE("systick: context switcher\n");
+      context_switcher();
     }
     load_context(); //Since the PSP has been updated, this loads the last state of the new task
 }
  
 //This does the same thing as the SysTick handler -- it is just triggered in a different way
-void PendSV_Handler(void){
-	
-	if (!running) return;
-    save_context();  //The context is immediately saved
+void PendSV_Handler(void)
+{
+    //save_context();  //The context is immediately saved
     stack = (uint32_t *)rd_stack_ptr();
     //core_proc_context_switcher();
+    TRACE("pendsv: context switcher\n");
     context_switcher();
     load_context(); //Since the PSP has been updated, this loads the last state of the new task
 }
@@ -164,7 +176,7 @@ int new_task(void *(*p)(void*), void * arg, void * stackaddr, int stack_size){
     hw_stack_frame_t * process_frame;
     //Disable context switching to support multi-threaded calls to this function
     INT_Disable();
-    for(i=0; i <= MAX_TASKS; i++){
+    for(i=1; i <= MAX_TASKS; i++){
 			
 				if (i == MAX_TASKS)
 					break;
@@ -191,7 +203,7 @@ int new_task(void *(*p)(void*), void * arg, void * stackaddr, int stack_size){
     
     if (i == MAX_TASKS)
     {
-			return -1;
+			return 0;
     }
     
     return i;
@@ -294,6 +306,7 @@ void enableInterrupts()
 	
 	/* Enable TIMER0 interrupt vector in NVIC */
   NVIC_EnableIRQ(SysTick_IRQn);
+  NVIC_EnableIRQ(PendSV_IRQn);
 	
 }
 
@@ -307,7 +320,14 @@ uint8_t task_main_stack[1024];
 void* task_main(void *arg)
 {
 	
+	INT_Disable();
+	
+	TRACE("WIN (1)\n");
+	
+	LED_On(RED);
+	LED_On(BLUE);
 	LED_On(GREEN);
+	
 	while(1);
 	
 }
@@ -316,7 +336,14 @@ uint8_t task2_main_stack[1024];
 void* task2_main(void *arg)
 {
 	
+	INT_Disable();
+	
+	TRACE("WIN (2)\n");
+	
 	LED_On(RED);
+	LED_On(BLUE);
+	LED_On(GREEN);
+	
 	while(1);
 	
 }
@@ -349,6 +376,8 @@ int main()
 	for(i=0; i < MAX_TASKS; i++)
     task_table[i].flags = 0;
 	
+	task_table[0].sp = rd_stack_ptr();
+	
 	if (new_task(task_main, 0, task_main_stack, 1024) == -1)
 	{
 		LED_On(RED); while(1);
@@ -358,11 +387,11 @@ int main()
 		LED_On(RED); while(1);
 	}
 	
+	//SysTick_Config(CMU_ClockFreqGet(cmuClock_CORE) / 100000);
 	SysTick_Config(CMU_ClockFreqGet(cmuClock_CORE) / 1000);
 	
 	enableInterrupts();
-	
-	running = true;
+	SCB->ICSR |= (1<<28); //switch the context
 	
 	while(1)
 	{
