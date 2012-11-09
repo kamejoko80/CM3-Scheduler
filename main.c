@@ -26,11 +26,23 @@ Main file for SLIP D embedded software
 #define IN_USE_FLAG 	0x00000001
 #define EXEC_FLAG 		0x00000002
 
+typedef struct {
+  uint32_t r4;
+  uint32_t r5;
+  uint32_t r6;
+  uint32_t r7;
+  uint32_t r8;
+  uint32_t r9;
+  uint32_t r10;
+  uint32_t r11;
+} sw_stack_frame_t;
+
 typedef struct
 {
 	
 	void *sp;
 	uint32_t flags;
+	sw_stack_frame_t sw_stack_frame;
 	
 } task_table_t;
 task_table_t task_table[MAX_TASKS];
@@ -132,7 +144,7 @@ void enableInterrupts()
 {
 	
 	/* Enable TIMER0 interrupt vector in NVIC */
-  //NVIC_EnableIRQ(SysTick_IRQn);
+  NVIC_EnableIRQ(SysTick_IRQn);
   NVIC_EnableIRQ(PendSV_IRQn);
 	
 }
@@ -172,27 +184,17 @@ typedef struct {
   uint32_t psr;
 } hw_stack_frame_t;
 
-typedef struct {
-  uint32_t r4;
-  uint32_t r5;
-  uint32_t r6;
-  uint32_t r7;
-  uint32_t r8;
-  uint32_t r9;
-  uint32_t r10;
-  uint32_t r11;
-} sw_stack_frame_t;
-
 uint8_t context_flash_blue_stack[1024];
 void context_flash_blue()
 {
 	
-	__asm volatile ("mov r0, #100\n\t");
-	__asm volatile ("mov r1, #123\n\t");
-	__asm volatile ("mov r2, #121\n\t");
-	__asm volatile ("mov r3, #16\n\t");
-	__asm volatile ("mov r12, #10\n\t");
-	while(1);
+	while(1)
+	{
+		TRACE("hello gerald\n");
+		LED_Toggle(BLUE);
+		int i;
+		for (i=0;i<100000;i++);
+	}
 	
 }
 
@@ -202,6 +204,7 @@ void context_flash_green()
 	
 	while(1)
 	{
+		TRACE("hello world\n");
 		LED_Toggle(GREEN);
 		int i;
 		for (i=0;i<100000;i++);
@@ -232,22 +235,18 @@ void task_return()
 void SysTick_Handler()
 {
 	
-	if (msp_in_use)
-	{
-		__asm volatile ("ORR lr, lr, #4\n\t"); // force jump to PSP
-	}
-	else
-	{
-		
-		__asm volatile (
+	__asm volatile(
+		"STMIA %0!, {r4-r11}\n\t"
+		:
+		: "r" (&task_table[current_task].sw_stack_frame)
+	);
+	
+	__asm volatile (
 			"MRS %0, PSP\n\t"
-			"STMDB %0!, {r4-r11}\n\t"
 			: "=r" (task_table[current_task].sp) // store current PSP in SP
 		);
-		
-	}
 	
-	/*
+	
 	do
 	{
 		
@@ -262,8 +261,8 @@ void SysTick_Handler()
 		
 	}
 	while(1);
-	*/
 	
+	/*
 	//hw_stack_frame_t *process_frame = (hw_stack_frame_t*)(((uint32_t)task_table[current_task].sp) + sizeof(sw_stack_frame_t));
 	hw_stack_frame_t *process_frame = (hw_stack_frame_t*)(((uint32_t)task_table[current_task].sp));
 	
@@ -278,7 +277,7 @@ void SysTick_Handler()
 		process_frame->pc,
 		process_frame->psr);
 	TRACE(tmsg);
-		
+	
 	process_frame->r0 = 0;
 	process_frame->r1 = 1;
 	process_frame->r2 = 2;
@@ -298,9 +297,18 @@ void SysTick_Handler()
 		process_frame->pc,
 		process_frame->psr);
 	TRACE(tmsg);
+	*/
+	__asm volatile (
+		"mov lr, #0xFFFFFFFD\n\t"
+		);
+	
+	__asm volatile(
+		"LDMIA %0!, {r4-r11}\n\t"
+		:
+		: "r" (&task_table[current_task].sw_stack_frame)
+	);
 	
 	__asm volatile (
-		"LDMIA %0!, {r4-r11}\n\t"
 		"MSR PSP, %0\n\t"
 		:
 		: "r" (task_table[current_task].sp));
@@ -309,18 +317,7 @@ void SysTick_Handler()
 void PendSV_Handler()
 {
 	
-	if (msp_in_use)
-	{
-		__asm volatile ("ORR lr, lr, #4\n\t"); // force jump to PSP
-	}
-	else
-	{
-		__asm volatile (
-			"MRS %0, PSP\n\t"
-			"STMDB %0!, {r4-r11}\n\t"
-			: "=r" (task_table[current_task].sp) // store current PSP in SP
-		);
-	}
+	
 	
 	do
 	{
@@ -338,7 +335,16 @@ void PendSV_Handler()
 	while(1);
 	
 	__asm volatile (
+		"mov lr, #0xFFFFFFFD\n\t"
+		);
+	
+	__asm volatile(
 		"LDMIA %0!, {r4-r11}\n\t"
+		:
+		: "r" (&task_table[current_task].sw_stack_frame)
+	);
+	
+	__asm volatile (
 		"MSR PSP, %0\n\t"
 		:
 		: "r" (task_table[current_task].sp));
@@ -360,9 +366,6 @@ bool task_init(void (*entry_point)(void), void *stack, uint32_t stack_size)
 	process_frame->lr = (uint32_t)task_return;
 	process_frame->psr = 0x21000000; //default PSR value
 	
-	sp -= sizeof(sw_stack_frame_t);
-	memset((void*)sp, 0, sizeof(sw_stack_frame_t));
-	
 	int i;
 	bool slot_found = false;
 	for (i = 0; i < MAX_TASKS; i++)
@@ -373,6 +376,7 @@ bool task_init(void (*entry_point)(void), void *stack, uint32_t stack_size)
 			
 			task_table[i].sp = (void*)(sp);
 			task_table[i].flags = IN_USE_FLAG | EXEC_FLAG;
+			memset(&task_table[i].sw_stack_frame,0,sizeof(sw_stack_frame_t));
 			slot_found = true;
 			break;
 			
@@ -408,8 +412,9 @@ int main()
 	
 	enableTimers();
 	
-	SysTick_Config(16777215);
-	//SysTick_Config(CMU_ClockFreqGet(cmuClock_CORE) / 4);
+	//SysTick_Config(16777215);
+	//SysTick_Config(CMU_ClockFreqGet(cmuClock_CORE) / 2);
+	SysTick_Config(500000); // ~ 2ms
 	
 	int i;
 	for (i = 0; i < MAX_TASKS; i++)
