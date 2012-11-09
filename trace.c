@@ -1,11 +1,47 @@
 #include "trace.h"
 
-#include "string.h"
+#include <string.h>
+#include <stdbool.h>
+
 #include "efm32_gpio.h"
 #include "efm32_cmu.h"
+#include "efm32_int.h"
 #include "efm32_usart.h"
 
+#include "tasker.h"
 #include "led.h"
+
+static uint32_t uart1_owner = UART_OWNER_NONE;
+static uint8_t *uart1_payload,
+	uart1_position,
+	uart1_length;
+
+void UART1_TX_IRQHandler()
+{
+	
+	if (!(UART1->STATUS & UART_STATUS_TXBL))
+		return;
+	
+	if (uart1_position < uart1_length)
+	{
+		UART1->TXDATA = uart1_payload[uart1_position];
+		uart1_position++;
+	}
+	else
+	{
+		// int disable
+		INT_Disable();
+		// release lock
+		uart1_owner = UART_OWNER_NONE;
+		// update flags
+		tasker_release(UART1_LOCK);
+		// disable irq
+		USART_IntDisable(UART1, UART_IF_TXBL);
+		// int enable
+		INT_Enable();
+	}
+	
+}
 
 void TRACE_Init()
 {
@@ -27,12 +63,31 @@ void TRACE_Init()
 void TRACE(char* msg)
 {
 	
-	int todo, bytesToSend = strlen(msg);
-	for (todo = 0; todo < bytesToSend; todo++) {
-		while (!(UART1->STATUS & USART_STATUS_TXBL));
-		UART1->TXDATA = *msg++;
+	do
+	{
+		INT_Disable();
+		if (uart1_owner == UART_OWNER_NONE)
+		{
+			uart1_owner = tasker_getCurrentTask();
+			INT_Enable();
+			break;
+		}
+		INT_Enable();
+		
+		// yield
+		task_switch(UART1_LOCK,false);
+		
 	}
+	while (uart1_owner != tasker_getCurrentTask());
 	
-	while (!(UART1->STATUS & USART_STATUS_TXC));
+	uart1_payload = (uint8_t*)msg;
+	uart1_position = 0,
+	uart1_length = strlen(msg);
+	
+	// enable irq
+	USART_IntEnable(UART1, UART_IF_TXBL);
+	
+	// yield
+	task_switch(UART1_LOCK,false);
 	
 }

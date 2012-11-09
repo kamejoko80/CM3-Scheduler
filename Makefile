@@ -90,7 +90,8 @@ efm32lib/src/efm32_adc.c \
 efm32lib/src/efm32_rtc.c \
 main.c \
 led.c \
-trace.c
+trace.c \
+tasker.c
 
 S_SRC +=  \
 CMSIS/CM3/DeviceSupport/EnergyMicro/EFM32/startup/cs3/startup_efm32gg.s
