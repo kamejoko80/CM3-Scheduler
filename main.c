@@ -190,10 +190,8 @@ void context_flash_blue()
 	
 	while(1)
 	{
-		TRACE("hello gerald\n");
 		LED_Toggle(BLUE);
-		int i;
-		for (i=0;i<100000;i++);
+		wait(1000);
 	}
 	
 }
@@ -204,10 +202,8 @@ void context_flash_green()
 	
 	while(1)
 	{
-		TRACE("hello world\n");
 		LED_Toggle(GREEN);
-		int i;
-		for (i=0;i<100000;i++);
+		wait(500);
 	}
 	
 }
