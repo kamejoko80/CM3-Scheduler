@@ -66,7 +66,8 @@ INCLUDEPATHS += \
 -Iefm32lib/inc \
 -Iefm32usb/inc \
 -Ifatfs/src \
--Idrivers
+-Idrivers \
+-Itasks
 
 ####################################################################
 # Files                                                            #
@@ -88,6 +89,7 @@ efm32lib/src/efm32_int.c \
 efm32lib/src/efm32_emu.c \
 efm32lib/src/efm32_adc.c \
 efm32lib/src/efm32_rtc.c \
+tasks/radio_task.c \
 main.c \
 led.c \
 scheduler.c 

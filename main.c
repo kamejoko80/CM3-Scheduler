@@ -12,6 +12,7 @@
 #include <stdbool.h>
 
 #include "scheduler.h"
+#include "tasks.h"
 #include "led.h"
 
 void initClocks();
@@ -28,7 +29,7 @@ int main()
 	SystemCoreClockUpdate();
 	
 	// start clocks
-	InitClocks();
+	initClocks();
 		
 	// init LEDs
 	LED_Init();
@@ -43,7 +44,7 @@ int main()
 	enableInterrupts();
 	
 	// init tasks
-	// SCHEDULER_TaskInit(task, entrypoint);
+	SCHEDULER_TaskInit(&radio_task, radio_task_entrypoint);
 	
 	// run
 	SCHEDULER_Run();
